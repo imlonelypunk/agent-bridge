@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mailbox": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mailbox_server.py"]
+    }
+  }
+}

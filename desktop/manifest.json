@@ -1,0 +1,49 @@
+{
+  "manifest_version": "0.3",
+  "name": "agent-bridge",
+  "display_name": "Agent Bridge",
+  "version": "0.1.0",
+  "description": "Exchange requests, replies and file snapshots with Codex and Antigravity.",
+  "author": {"name": "Agent Bridge contributors"},
+  "server": {
+    "type": "node",
+    "entry_point": "launch.cjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/launch.cjs"],
+      "env": {
+        "AGENT_BRIDGE_PYTHON": "${user_config.python_command}",
+        "AGENT_BRIDGE_CHANNEL": "${user_config.channel_directory}",
+        "AGENT_BRIDGE_WORKSPACE": "${user_config.workspace}"
+      }
+    }
+  },
+  "tools_generated": true,
+  "compatibility": {
+    "platforms": ["win32", "darwin", "linux"],
+    "runtimes": {"node": ">=18"}
+  },
+  "user_config": {
+    "python_command": {
+      "type": "string",
+      "title": "Python executable",
+      "description": "Command or absolute path to Python 3.10 or later. Use python3 on macOS and Linux.",
+      "default": "python",
+      "required": true
+    },
+    "channel_directory": {
+      "type": "directory",
+      "title": "Shared mailbox",
+      "description": "Choose the mailbox folder used by Codex and Antigravity on this host.",
+      "default": "${HOME}/.agent-bridge/channel",
+      "required": true
+    },
+    "workspace": {
+      "type": "directory",
+      "title": "Attachment workspace",
+      "description": "Base folder for relative file attachments. Messages work across all projects.",
+      "default": "${HOME}",
+      "required": true
+    }
+  }
+}
