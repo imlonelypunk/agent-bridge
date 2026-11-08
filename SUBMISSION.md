@@ -1,6 +1,6 @@
 # Claude directory submission draft
 
-- Listing name and version are Agent Bridge 0.1.0. Submit the `plugin/` folder as a Plugin bundle. The repository should contain Agent Bridge source and documentation only.
+- Listing name and version are Agent Bridge 0.1.1. Submit the `plugin/` folder as a Plugin bundle. The standalone CLI and Desktop package are outside the submitted folder.
 - Upload the source to a GitHub repository the publisher can push to. Connect that GitHub account in the Claude developer portal. The repository can be private during validation and must be public for a live listing.
 - Run `claude plugin validate --strict ./plugin`. In the [developer portal](https://claude.ai/directory/manage), choose the repository and `plugin` path, then validate the selected revision. Review the listing preview and provide the publisher's verified contact, support and privacy links.
 - The plugin stores text and routing metadata on the user's filesystem until the user removes the channel. Text in tool requests and results is visible to Claude. The plugin entry point opens no network connection, requests no credentials, and does not launch vendor sessions. The root repository documents the separately installed full bridge and its additional data flows. Use the public URL for `plugin/PRIVACY.md` when the repository is public.

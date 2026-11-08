@@ -121,6 +121,9 @@ class BridgeTests(unittest.TestCase):
     def test_detached_dispatch_and_no_duplicate_launch(self):
         bundle = self.base / "app"
         bundle.mkdir()
+        (bundle / "plugin").mkdir()
+        for name in ("__init__.py", "mailbox_server.py"):
+            shutil.copy2(self.script.parent / "plugin" / name, bundle / "plugin")
         self.script = Path(shutil.copy2(self.script, bundle))
         (bundle / "bridge_runner.py").write_text(
             "TIMEOUT = 2\nNO_WINDOW = 0\n"

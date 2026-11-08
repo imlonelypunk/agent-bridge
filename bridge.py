@@ -4,7 +4,6 @@ import argparse
 import base64
 import binascii
 from contextlib import closing
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -19,36 +18,21 @@ import time
 from uuid import uuid4
 
 import bridge_runner
+from plugin.mailbox_server import (
+    AGENTS, BODY, INBOX_FIELDS, MAX_LINE, MESSAGE_ID, REQUEST_ID, VERSIONS,
+    BridgeError, MailboxStore, timestamp, tool, validate, validate_call,
+)
 
 
-AGENTS = ("codex", "claude", "antigravity")
-ROOT = Path(__file__).resolve().parent.parent.parent
+ROOT = Path(__file__).resolve().parent
 OUTBOX = ".kinesis_native_build/agent-bridge-outbox/"
 MAX_FILE = 8 * 1024 * 1024
-MAX_LINE = 256 * 1024
 MAX_RELAY_LINE = 48 * 1024 * 1024
-VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
-BODY = {"type": "string", "minLength": 1, "maxLength": 8000}
 FILES = {
     "type": "array", "maxItems": 4,
     "items": {"type": "string", "minLength": 1, "maxLength": 512},
     "description": "Explicitly authorized tracked files or files in " + OUTBOX,
 }
-MESSAGE_ID = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
-REQUEST_ID = {
-    "type": "string", "pattern": "^[a-zA-Z0-9._-]{1,100}$",
-    "description": "Reuse this key to safely retry the same send or reply.",
-}
-
-
-def tool(description, required, **properties):
-    return {
-        "description": description,
-        "inputSchema": {
-            "type": "object", "properties": properties,
-            "required": required, "additionalProperties": False,
-        },
-    }
 
 
 TOOLS = {
@@ -62,9 +46,7 @@ TOOLS = {
     ),
     "inbox": tool(
         "List recent incoming messages. Pending messages remain visible until acknowledged.",
-        [], include_acknowledged={"type": "boolean"},
-        limit={"type": "integer", "minimum": 1, "maximum": 50},
-        before={"type": "integer", "minimum": 1, "maximum": 2**63 - 1},
+        [], **INBOX_FIELDS,
     ),
     "read": tool(
         "Read one message and get local paths to its attached snapshots. "
@@ -91,31 +73,6 @@ TOOLS = {
         ["message_id"], message_id=MESSAGE_ID,
     ),
 }
-
-
-class BridgeError(ValueError):
-    pass
-
-
-def validate(value, schema):
-    expected = {"string": str, "array": list, "boolean": bool, "integer": int}
-    if type(value) is not expected[schema["type"]]:
-        raise BridgeError(f"expected {schema['type']}")
-    if isinstance(value, str):
-        if not schema.get("minLength", 0) <= len(value) <= schema.get("maxLength", 8000):
-            raise BridgeError("invalid text length")
-        if "pattern" in schema and not re.fullmatch(schema["pattern"], value):
-            raise BridgeError("invalid format")
-        if "enum" in schema and value not in schema["enum"]:
-            raise BridgeError("unknown option")
-        value.encode("utf-8")
-    elif isinstance(value, list):
-        if len(value) > schema["maxItems"]:
-            raise BridgeError("too many attachments")
-        for item in value:
-            validate(item, schema["items"])
-    elif type(value) is int and not schema["minimum"] <= value <= schema["maximum"]:
-        raise BridgeError("integer out of range")
 
 
 def git(root, *args):
@@ -168,18 +125,13 @@ def read_attachment(root, relative):
     return parts[-1], hashlib.sha256(data).hexdigest(), data
 
 
-def timestamp():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-class Mailbox:
+class Mailbox(MailboxStore):
     tools = TOOLS
 
     def __init__(self, root, agent, channel=None, dispatch_enabled=False):
+        super().__init__(agent, channel)
         self.root = root
-        self.agent = agent
         self.channel = channel
-        self.store = channel
         self.dispatch_enabled = dispatch_enabled
 
     def check_handoff(self, recipient, task_id):
@@ -204,20 +156,9 @@ class Mailbox:
             if result.returncode != 0:
                 raise BridgeError("start the bridge from a Kinesis Git checkout")
             self.store = Path(result.stdout.decode("utf-8").strip()) / "kinesis-bridge"
-        self.store.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.store / "mailbox.sqlite3", timeout=10)
+        db = super().connect()
         try:
-            db.row_factory = sqlite3.Row
             db.executescript("""
-                CREATE TABLE IF NOT EXISTS messages (
-                    seq INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL,
-                    sender TEXT NOT NULL, recipient TEXT NOT NULL,
-                    kind TEXT NOT NULL, task_id TEXT, reply_to TEXT,
-                    body TEXT NOT NULL, sent_at TEXT NOT NULL, acknowledged_at TEXT,
-                    request_id TEXT, request_json TEXT,
-                    UNIQUE (sender, request_id)
-                );
-                CREATE INDEX IF NOT EXISTS inbox ON messages(recipient, seq);
                 CREATE TABLE IF NOT EXISTS files (
                     message_id TEXT NOT NULL, position INTEGER NOT NULL,
                     name TEXT NOT NULL, sha256 TEXT NOT NULL, data BLOB NOT NULL,
@@ -235,17 +176,7 @@ class Mailbox:
         return db
 
     def call(self, name, arguments, uploaded=None, relay=False):
-        if not isinstance(name, str) or name not in self.tools or not isinstance(arguments, dict):
-            raise BridgeError("unknown tool or invalid arguments")
-        schema = self.tools[name]["inputSchema"]
-        properties = schema["properties"]
-        if arguments.keys() - properties.keys() or set(schema["required"]) - arguments.keys():
-            raise BridgeError("unexpected or missing tool arguments")
-        for key, value in arguments.items():
-            try:
-                validate(value, properties[key])
-            except (BridgeError, UnicodeError) as error:
-                raise BridgeError(f"{key}: {error}") from error
+        validate_call(self.tools, name, arguments)
         with closing(self.connect()) as db, db:
             if relay and name == "read":
                 return self.read(db, **arguments, wire=True)
@@ -268,62 +199,23 @@ class Mailbox:
         )
 
     def enqueue(self, db, to, kind, body, task_id, reply_to, files, request_id, uploaded=None):
-        if not body.strip():
-            raise BridgeError("message body must not be blank")
         attachment_keys = files if uploaded is None else [(name, digest) for name, digest, _ in uploaded]
-        request_json = json.dumps([to, kind, body, task_id, reply_to, attachment_keys])
-        # Acquire the write lock before checking the retry key or creating the message.
-        db.execute("BEGIN IMMEDIATE")
-        if request_id:
-            prior = db.execute(
-                "SELECT id, request_json FROM messages WHERE sender = ? AND request_id = ?",
-                (self.agent, request_id),
-            ).fetchone()
-            if prior is not None:
-                if prior["request_json"] != request_json:
-                    raise BridgeError("request_id was already used for a different message")
-                return {"message_id": prior["id"], "queued": True}
+        message_id, request_json = self.prepare_message(
+            db, to, kind, body, task_id, reply_to, request_id, attachment_keys,
+        )
+        if request_json is None:
+            return {"message_id": message_id, "queued": True}
         if kind == "handoff":
             self.check_handoff(to, task_id)
         attachments = uploaded if uploaded is not None else [
             read_attachment(self.root, path) for path in files
         ]
-        message_id = uuid4().hex
-        db.execute(
-            """INSERT INTO messages
-               (id, sender, recipient, kind, task_id, reply_to, body, sent_at, request_id, request_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (message_id, self.agent, to, kind, task_id, reply_to, body, timestamp(),
-             request_id, request_json if request_id else None),
-        )
+        self.insert_message(db, message_id, to, kind, body, task_id, reply_to, request_id, request_json)
         db.executemany(
             "INSERT INTO files VALUES (?, ?, ?, ?, ?)",
             ((message_id, index, *attachment) for index, attachment in enumerate(attachments)),
         )
         return {"message_id": message_id, "queued": True}
-
-    def inbox(self, db, include_acknowledged=False, limit=20, before=None):
-        rows = db.execute(
-            """SELECT seq, id, sender, kind, task_id, reply_to, sent_at, acknowledged_at,
-                      substr(body, 1, 160) AS preview
-               FROM messages WHERE recipient = ? AND (? OR acknowledged_at IS NULL)
-               AND seq < ? ORDER BY seq DESC LIMIT ?""",
-            (self.agent, include_acknowledged, before or 2**63 - 1, limit + 1),
-        ).fetchall()
-        return {
-            "agent": self.agent,
-            "messages": [dict(row) for row in rows[:limit]],
-            "next_before": rows[limit - 1]["seq"] if len(rows) > limit else None,
-        }
-
-    def find(self, db, message_id, incoming=False):
-        row = db.execute(
-            "SELECT * FROM messages WHERE id = ? AND (recipient = ? OR sender = ?)",
-            (message_id, self.agent, None if incoming else self.agent),
-        ).fetchone()
-        if row is None:
-            raise BridgeError("message not found for this role")
-        return dict(row)
 
     def files(self, db, message_id):
         return db.execute(
@@ -332,8 +224,7 @@ class Mailbox:
         ).fetchall()
 
     def read(self, db, message_id, wire=False):
-        message = self.find(db, message_id)
-        del message["request_json"], message["request_id"]
+        message = super().read(db, message_id)
         files = self.files(db, message_id)
         if wire:
             message["attachments"] = [
@@ -346,14 +237,6 @@ class Mailbox:
                 materialize(self.store, message_id, file["position"], file) for file in files
             ]
         return message
-
-    def ack(self, db, message_id):
-        self.find(db, message_id, incoming=True)
-        db.execute(
-            "UPDATE messages SET acknowledged_at = coalesce(acknowledged_at, ?) WHERE id = ?",
-            (timestamp(), message_id),
-        )
-        return {"message_id": message_id, "acknowledged": True}
 
     def dispatch(self, db, message_id):
         message = self.find(db, message_id)

@@ -17,8 +17,10 @@ claude plugin install agent-bridge@agent-bridge-plugins --scope user
 
 The standalone MCP server and CLI support file snapshots, optional SSH relay, and optional one-shot advisory sessions. They require Python 3.10 or newer. Git is required when sending tracked files. These PowerShell examples register the server for all projects with a shared channel. On macOS or Linux, use the corresponding shell and interpreter path.
 
+If a standalone registration points to `plugin/bridge.py` in this checkout, update it to `bridge.py` at the repository root. Keep the same mailbox path.
+
 ```powershell
-$bridge = (Resolve-Path ./plugin/bridge.py).Path
+$bridge = (Resolve-Path ./bridge.py).Path
 $channel = Join-Path $HOME '.agent-bridge/channel'
 codex mcp add agent_bridge -- python $bridge --agent codex --channel-dir $channel serve
 agy mcp add agent_bridge -- python $bridge --agent antigravity --channel-dir $channel serve
@@ -34,7 +36,7 @@ Start a fresh session after registration. Ask an agent to send a short question 
 
 For unattended advisory replies, add `--enable-dispatch` before `serve` in the sender's standalone profile. The target CLI must be installed and signed in on the mailbox host. A dispatch starts a separate CLI session in a temporary workspace. It passes the selected message and eligible UTF-8 file snapshots to the selected model provider. Each message can start one session with a 240-second deadline. CLI dispatch and interactive IDE conversations use separate sessions.
 
-For a mailbox on another machine, run the standalone bridge on a trusted SSH host with a local mailbox directory. Configure each client with `--ssh-host HOST --remote-command 'python3 /path/to/bridge.py --agent ROLE --channel-dir /path/to/channel --accept-relay serve' serve` in place of its local channel and `serve` arguments. Use the same role at both ends and verify the host key in advance. Real multi-host operation has not been verified for this release draft.
+For a mailbox on another machine, keep a checkout on a trusted SSH host with a local mailbox directory. Configure each client with `--ssh-host HOST --remote-command 'python3 /path/to/bridge.py --agent ROLE --channel-dir /path/to/channel --accept-relay serve' serve` in place of its local channel and `serve` arguments. Use the same role at both ends and verify the host key in advance. Real multi-host operation has not been verified for this release draft. See [full bridge data handling](desktop/PRIVACY.md).
 
 ## Claude Desktop package
 
@@ -48,7 +50,6 @@ Install the `.mcpb` through Claude Desktop's extension settings. Set the Python 
 
 ```powershell
 claude plugin validate --strict ./plugin
-$env:PYTHONPATH = (Resolve-Path ./plugin).Path
 python -m unittest discover -s tests -v
 ```
 
