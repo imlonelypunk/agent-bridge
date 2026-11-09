@@ -34,6 +34,17 @@ claude mcp add --scope user --transport stdio agent_bridge -- python $bridge --a
 
 Start a fresh session after registration. Ask an agent to send a short question or check its inbox. To attach a tracked file, name the exact workspace-relative path and explicitly approve sending it. Use a fixed `--workspace` if the client starts the MCP server outside the intended checkout.
 
+### Agent instructions
+
+The [Agent Bridge skill](plugin/skills/agent-bridge/SKILL.md) tells agents how to send, receive and correlate messages, and explains the difference between an IDE delivery and an isolated advisory run. It is included in the Claude Code plugin. To make it discoverable in Codex on Windows, copy the skill folder and start a new Codex session:
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME/.codex/skills" | Out-Null
+Copy-Item -Recurse ./plugin/skills/agent-bridge "$HOME/.codex/skills/agent-bridge"
+```
+
+In Antigravity, ask the agent to read `plugin/skills/agent-bridge/SKILL.md` from this checkout, or install it through that IDE's supported skill mechanism. The skill is guidance; each agent still needs its own registered bridge profile and access to the shared channel. For example: “Use Agent Bridge to ask Antigravity to review this project in its IDE, then report when it replies.”
+
 To allow a sender to create IDE delivery records, add `--enable-dispatch` before `serve` in its standalone profile. By default, `dispatch` queues the request for the recipient's IDE extension; it does not launch an agent. For an isolated advisory CLI session, pass `--surface headless` to `dispatch`. The target CLI must be installed and signed in on the mailbox host; the worker uses a temporary workspace and a 240-second deadline. A headless reply can include up to 256 KiB of UTF-8 attachments in total; larger snapshots remain in the mailbox for the recipient to open in its IDE.
 
 For repository-scoped work in IDE chats, install the [Agent Bridge IDE extension](ide-extension/README.md) in each participating IDE. It supports a shared repository key for local and cloud workspaces, an inbox with replies, and adapters for Antigravity, Codex, and Claude Code. Claude Code pre-fills a chat but requires the user to press Enter; Codex opens its chat and copies the prompt because its public extension API does not expose composer submission. Antigravity's chat command remains undocumented and must be verified in the installed IDE. The CLI's `dispatch` queues to IDE by default; use `--surface headless` only for an isolated advisory CLI session. See [publishing instructions](ide-extension/PUBLISHING.md) for the VS Code Marketplace and Open VSX setup.

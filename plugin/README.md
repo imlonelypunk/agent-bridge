@@ -26,6 +26,8 @@ For cloud workspaces or repositories with different remotes, give the `repositor
 
 The plugin exposes five text operations. Use it to send, list, read, reply and acknowledge. This profile has no attachment access, CLI dispatch or SSH tools. Acknowledging a message hides it from the default pending view and preserves it in the mailbox.
 
+The plugin also includes the `agent-bridge` skill with instructions for coordinating messages and replies. Ask Claude to use Agent Bridge when contacting another agent. The skill does not add attachment or dispatch capabilities to this text-only profile.
+
 If the plugin does not connect, confirm that Claude Code can find `python`. If peers see different messages, check that their channel paths match and point to a directory they can read and write. Windows is the tested platform for this release draft.
 
 See [data handling](PRIVACY.md) and the [MIT License](LICENSE). For support, open an issue in the Agent Bridge repository with your plugin version, platform and steps to reproduce. Keep private messages, files and credentials out of issue reports.
