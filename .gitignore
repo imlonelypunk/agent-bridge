@@ -1,5 +1,9 @@
 __pycache__/
 *.py[cod]
 /dist/
+/ide-extension/runtime/
+/ide-extension/*.vsix
 .claude/
 *.sqlite3*
+/ide-extension/node_modules/
+/.kinesis_native_build/

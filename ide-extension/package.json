@@ -1,0 +1,202 @@
+{
+  "name": "agent-bridge",
+  "displayName": "Agent Bridge",
+  "description": "Send repository-scoped requests and replies between Antigravity, Codex, and Claude Code IDEs.",
+  "version": "0.1.1",
+  "publisher": "imlonelypunk",
+  "license": "MIT",
+  "icon": "icon.png",
+  "pricing": "Free",
+  "keywords": [
+    "agent",
+    "codex",
+    "claude-code",
+    "antigravity",
+    "mcp",
+    "collaboration",
+    "mailbox"
+  ],
+  "homepage": "https://github.com/imlonelypunk/agent-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/imlonelypunk/agent-bridge/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/imlonelypunk/agent-bridge.git",
+    "directory": "ide-extension"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "main": "./extension.js",
+  "files": [
+    "extension.js",
+    "bridge-core.js",
+    "python-resolver.js",
+    "runtime/**",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "package.json",
+    "icon.png"
+  ],
+  "scripts": {
+    "vscode:prepublish": "node ./scripts/bundle-runtime.js",
+    "build:icon": "node ./scripts/generate-icon.js",
+    "test": "node --test"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Workspace routing and file transfer require a trusted repository."
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentBridge.configure",
+        "title": "Agent Bridge: Configure"
+      },
+      {
+        "command": "agentBridge.checkInbox",
+        "title": "Agent Bridge: Check Inbox"
+      },
+      {
+        "command": "agentBridge.send",
+        "title": "Agent Bridge: Send to Agent"
+      },
+      {
+        "command": "agentBridge.openMessage",
+        "title": "Agent Bridge: Open in IDE"
+      },
+      {
+        "command": "agentBridge.reviewMessage",
+        "title": "Agent Bridge: Review Message"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "agentBridge.inbox",
+          "name": "Agent Bridge Inbox",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "agentBridge.openMessage",
+          "when": "view == agentBridge.inbox && viewItem == bridgeRequest",
+          "group": "1_run"
+        },
+        {
+          "command": "agentBridge.reviewMessage",
+          "when": "view == agentBridge.inbox && (viewItem == bridgeRequest || viewItem == bridgeReply)",
+          "group": "1_run"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "agentBridge.openMessage",
+          "when": "false"
+        },
+        {
+          "command": "agentBridge.reviewMessage",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Agent Bridge",
+      "properties": {
+        "agentBridge.bridgeScript": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Optional path to bridge.py. Packaged extensions include the runtime."
+        },
+        "agentBridge.pythonExecutable": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Optional Python 3.10+ executable override. The extension otherwise probes python3/python or the Windows py launcher."
+        },
+        "agentBridge.channelDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Shared Agent Bridge mailbox folder. Defaults to ~/.agent-bridge/channel."
+        },
+        "agentBridge.agent": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "codex",
+            "claude",
+            "antigravity"
+          ],
+          "default": "auto",
+          "scope": "application",
+          "description": "Mailbox role for this IDE. Auto detects the installed agent extension or Antigravity host."
+        },
+        "agentBridge.repositoryId": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "Optional stable shared key for a local or cloud repository. Defaults to a hash of its Git origin; local repositories without an origin use a machine-local path key."
+        },
+        "agentBridge.enableDispatch": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Allow an explicitly confirmed send to create an IDE inbox delivery record."
+        },
+        "agentBridge.sshHost": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Optional trusted SSH host alias for a mailbox on another machine."
+        },
+        "agentBridge.remoteCommand": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Fixed remote bridge.py relay command. Required together with sshHost."
+        },
+        "agentBridge.workspacePath": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "Workspace for this IDE window. Defaults to the folder containing the active editor, then the first open folder."
+        },
+        "agentBridge.pollSeconds": {
+          "type": "integer",
+          "default": 10,
+          "minimum": 5,
+          "maximum": 60,
+          "scope": "application",
+          "description": "Seconds between local mailbox checks."
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@vscode/vsce": "4.1.0",
+    "ovsx": "1.4.0"
+  },
+  "overrides": {
+    "minimatch": "11.0.1"
+  }
+}

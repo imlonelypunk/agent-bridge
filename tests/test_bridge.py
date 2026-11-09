@@ -1,5 +1,6 @@
 import hashlib
 import json
+from contextlib import closing
 from pathlib import Path
 import shutil
 import subprocess
@@ -41,6 +42,15 @@ class BridgeTests(unittest.TestCase):
 
     def profile(self, agent):
         return bridge.Mailbox(self.workspace, agent, self.channel)
+
+    def test_repository_key_cli_matches_routed_message_with_and_without_origin(self):
+        for remote in (None, "https://github.com/Example/Repo.git"):
+            if remote:
+                self.assertEqual(bridge.git(self.workspace, "remote", "add", "origin", remote).returncode, 0)
+            key = self.cli("codex", "repository-key")["repository_id"]
+            sent = self.cli("codex", "send", "--to", "claude", "--kind", "request", "--body", "route check")
+            message = self.cli("claude", "read", "--message-id", sent["message_id"])
+            self.assertEqual(message["repository_id"], key)
 
     def test_cross_machine_protocol_returns_local_snapshot(self):
         def client(agent):
@@ -98,6 +108,82 @@ class BridgeTests(unittest.TestCase):
                 sender.call("send", {**args, "request_id": "unsafe", "files": [filename]})
         self.assertEqual(len(self.profile("claude").call("inbox", {})["messages"]), 1)
 
+    def test_repository_scoped_ide_dispatch_ack_reply_and_idempotency(self):
+        repository_id = "team:project-victoria3"
+        sender = self.profile("codex")
+        recipient = self.profile("claude")
+        sent = sender.call("send", {
+            "to": "claude", "kind": "request", "body": "Review this repository.",
+            "request_id": "ide-route-1", "repository_id": repository_id,
+        })
+        message_id = sent["message_id"]
+        with closing(sender.connect()) as db, db:
+            legacy = sender.enqueue(
+                db, "claude", "request", "Legacy message without a route.",
+                None, None, (), None, repository_id=None,
+            )
+        dispatched = self.cli(
+            "codex", "--enable-dispatch", "dispatch", "--message-id", message_id,
+        )
+        self.assertEqual(dispatched["state"], "queued_for_ide")
+        repeated = self.cli(
+            "codex", "--enable-dispatch", "dispatch", "--message-id", message_id,
+        )
+        self.assertEqual(repeated, dispatched)
+
+        self.assertEqual(recipient.call("inbox", {"repository_id": "team:other"})["messages"], [])
+        routed = recipient.call("inbox", {"repository_id": repository_id})["messages"]
+        self.assertEqual([item["id"] for item in routed], [message_id])
+        with self.assertRaisesRegex(bridge.BridgeError, "does not belong to this repository"):
+            recipient.call("read", {"message_id": legacy["message_id"], "repository_id": repository_id})
+        with self.assertRaisesRegex(bridge.BridgeError, "does not belong to this repository"):
+            recipient.call("ack", {"message_id": legacy["message_id"], "repository_id": repository_id})
+        incoming = recipient.call("read", {"message_id": message_id})
+        self.assertEqual(incoming["repository_id"], repository_id)
+        recipient.call("ack", {"message_id": message_id})
+        self.assertEqual(sender.call("dispatch_status", {"message_id": message_id})["state"], "opened")
+
+        reply = recipient.call("reply", {"message_id": message_id, "body": "Review complete."})
+        status = sender.call("dispatch_status", {"message_id": message_id})
+        self.assertEqual((status["state"], status["reply_id"]), ("replied", reply["message_id"]))
+        reply_message = sender.call("read", {"message_id": reply["message_id"]})
+        self.assertEqual((reply_message["repository_id"], reply_message["body"]),
+                         (repository_id, "Review complete."))
+
+    def test_repository_key_uses_git_origin_or_local_root(self):
+        root = self.workspace
+        local = bridge.repository_id_for_workspace(root)
+        bridge.git(root, "remote", "add", "origin", "git@github.com:Example/Project.git")
+        ssh = bridge.repository_id_for_workspace(root)
+        bridge.git(root, "remote", "set-url", "origin", "https://github.com/example/project.git")
+        https = bridge.repository_id_for_workspace(root)
+        self.assertEqual(ssh, https)
+        self.assertTrue(ssh.startswith("git:"))
+        bridge.git(root, "remote", "remove", "origin")
+        self.assertEqual(bridge.repository_id_for_workspace(root), local)
+
+    def test_repository_normalization_matches_shared_vectors(self):
+        vectors = json.loads((Path(__file__).parent / "repository_keys.json").read_text(encoding="utf-8"))
+        for vector in vectors:
+            with self.subTest(remote=vector["remote"]):
+                self.assertEqual(bridge.normalized_repository(vector["remote"]), vector["normalized"])
+
+    def test_late_reply_updates_an_expired_ide_dispatch(self):
+        sender = self.profile("codex")
+        recipient = self.profile("claude")
+        sent = sender.call("send", {
+            "to": "claude", "kind": "request", "body": "Reply after expiry.",
+            "repository_id": "team:late-reply",
+        })
+        message_id = sent["message_id"]
+        self.cli("codex", "--enable-dispatch", "dispatch", "--message-id", message_id)
+        with closing(sender.connect()) as db, db:
+            db.execute("UPDATE runs SET deadline = ? WHERE message_id = ?", (time.time() - 1, message_id))
+        self.assertEqual(sender.call("dispatch_status", {"message_id": message_id})["state"], "expired")
+        reply = recipient.call("reply", {"message_id": message_id, "body": "Late but delivered."})
+        status = sender.call("dispatch_status", {"message_id": message_id})
+        self.assertEqual((status["state"], status["reply_id"]), ("replied", reply["message_id"]))
+
     def test_stdio_handshake_and_tool_calls(self):
         def request(method, number, params):
             return json.dumps({"jsonrpc": "2.0", "id": number, "method": method, "params": params})
@@ -142,14 +228,16 @@ class BridgeTests(unittest.TestCase):
             with self.subTest(sender=sender, target=target, prompt=prompt):
                 sent = self.cli(sender, "send", "--to", target, "--kind", "question", "--body", prompt)
                 message_id = sent["message_id"]
-                run = self.cli(sender, "--enable-dispatch", "dispatch", "--message-id", message_id)
+                run = self.cli(sender, "--enable-dispatch", "dispatch", "--message-id", message_id,
+                               "--surface", "headless")
                 self.assertEqual(run["state"], "scheduled")
                 for _ in range(50):
                     run = self.cli(sender, "dispatch_status", "--message-id", message_id)
                     if run["state"] not in ("scheduled", "running"):
                         break
                     time.sleep(0.05)
-                repeat = self.cli(sender, "--enable-dispatch", "dispatch", "--message-id", message_id)
+                repeat = self.cli(sender, "--enable-dispatch", "dispatch", "--message-id", message_id,
+                                  "--surface", "headless")
                 self.assertEqual(run, repeat)
                 if prompt == "fail":
                     self.assertEqual((run["state"], run["detail"]), ("failed", "fixture auth error"))
@@ -170,6 +258,24 @@ class BridgeTests(unittest.TestCase):
         ):
             with self.subTest(agent=agent):
                 self.assertEqual(bridge_runner.response_from(agent, payload), ("yes", "id"))
+
+    def test_headless_prompt_accepts_256_kib_total_utf8_attachments(self):
+        message = {
+            "id": "request-1", "sender": "codex", "recipient": "claude",
+            "kind": "request", "task_id": None, "body": "Review the attached source.",
+        }
+        half = bridge_runner.MAX_CONTEXT // 2
+        exact_limit = [
+            {"name": "first.py", "data": b"a" * half},
+            {"name": "second.py", "data": b"b" * half},
+        ]
+        prompt = bridge_runner.prompt_for(message, exact_limit)
+        self.assertIn('"name": "first.py"', prompt)
+        self.assertIn('"name": "second.py"', prompt)
+
+        over_limit = [{"name": "large.py", "data": b"a" * (bridge_runner.MAX_CONTEXT + 1)}]
+        with self.assertRaisesRegex(bridge_runner.RunError, "256 KiB"):
+            bridge_runner.prompt_for(message, over_limit)
 
     def test_antigravity_dispatch_rejects_hooks(self):
         home = self.base / "profile"

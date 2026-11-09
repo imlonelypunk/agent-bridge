@@ -1,0 +1,10 @@
+[
+  {"remote": "https://github.com/Example/Project.git", "normalized": "github.com/example/project"},
+  {"remote": "git@github.com:example/project.git", "normalized": "github.com/example/project"},
+  {"remote": "ssh://git@github.com/example/project", "normalized": "github.com/example/project"},
+  {"remote": "ssh://git@github.com:2222/Example/Project.git/", "normalized": "github.com/example/project"},
+  {"remote": "https://token@github.com/Example/Project.git", "normalized": "github.com/example/project"},
+  {"remote": "https://gitlab.com/Group/Subgroup/Project.git/", "normalized": "gitlab.com/group/subgroup/project"},
+  {"remote": "", "normalized": null},
+  {"remote": "https://github.com/", "normalized": null}
+]

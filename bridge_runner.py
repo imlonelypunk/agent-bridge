@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory, TemporaryFile
 
 
 TIMEOUT = 240
-MAX_CONTEXT = 32 * 1024
+MAX_CONTEXT = 256 * 1024
 MAX_OUTPUT = 1024 * 1024
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -72,7 +72,8 @@ def prompt_for(message, files):
                 raise UnicodeError
             content = data.decode("utf-8")
         except UnicodeError:
-            raise RunError("Automatic replies require UTF-8 attachments totaling at most 32 KiB. "
+            limit_kib = MAX_CONTEXT // 1024
+            raise RunError(f"Automatic replies require UTF-8 attachments totaling at most {limit_kib} KiB. "
                            "The original files are available in the mailbox.")
         attachments.append({"name": file["name"], "text": content})
         remaining -= len(data)
