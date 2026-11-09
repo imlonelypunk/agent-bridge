@@ -19,6 +19,19 @@ PLUGIN = Path(bridge.__file__).resolve().parent / "plugin"
 
 
 class ClaudePluginTests(unittest.TestCase):
+    def test_text_plugin_waits_for_full_bridge_reply(self):
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "repo"
+            workspace.mkdir()
+            channel = Path(tmp) / "channel"
+            plugin = TextMailbox("claude", channel)
+            other = bridge.Mailbox(workspace, "antigravity", channel)
+            request = plugin.call("send", {"to": "antigravity", "kind": "question", "body": "Check"})
+            reply = other.call("reply", {"message_id": request["message_id"], "body": "Готово"})
+            result = plugin.call("wait_reply", {"message_id": request["message_id"], "timeout_seconds": 1})
+            self.assertEqual(result["reply"]["id"], reply["message_id"])
+            self.assertEqual(result["reply"]["body"], "Готово")
+
     def test_repository_key_matches_shared_vectors(self):
         vectors = json.loads((PLUGIN.parent / "tests" / "repository_keys.json").read_text(encoding="utf-8"))
         for vector in vectors:
@@ -125,9 +138,9 @@ class ClaudePluginTests(unittest.TestCase):
             responses = [json.loads(line) for line in result.stdout.splitlines()]
             self.assertEqual([r["id"] for r in responses], list(range(len(requests))))
             self.assertEqual(responses[0]["result"]["serverInfo"]["name"], "agent-bridge")
-            self.assertEqual(responses[0]["result"]["serverInfo"]["version"], "0.1.2")
+            self.assertEqual(responses[0]["result"]["serverInfo"]["version"], "0.1.3")
             tools = {t["name"]: t for t in responses[1]["result"]["tools"]}
-            self.assertEqual(set(tools), {"send", "inbox", "read", "reply", "ack"})
+            self.assertEqual(set(tools), {"send", "inbox", "read", "reply", "ack", "wait_reply"})
             self.assertNotIn("files", tools["send"]["inputSchema"]["properties"])
             self.assertTrue(tools["read"]["annotations"]["readOnlyHint"])
             self.assertFalse(tools["send"]["annotations"]["openWorldHint"])

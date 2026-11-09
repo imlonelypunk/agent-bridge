@@ -20,7 +20,7 @@ from uuid import uuid4
 
 import bridge_runner
 from plugin.mailbox_server import (
-    AGENTS, BODY, INBOX_FIELDS as BASE_INBOX_FIELDS, MAX_LINE, MESSAGE_ID, REQUEST_ID, VERSIONS,
+    AGENTS, BODY, INBOX_FIELDS as BASE_INBOX_FIELDS, MAX_LINE, MESSAGE_ID, REQUEST_ID, VERSIONS, WAIT_SECONDS,
     BridgeError, MailboxStore, timestamp, tool, validate, validate_call,
 )
 
@@ -86,6 +86,10 @@ TOOLS = {
     "dispatch_status": tool(
         "Show the launch state and reply ID for a message.",
         ["message_id"], message_id=MESSAGE_ID,
+    ),
+    "wait_reply": tool(
+        "Wait for a correlated reply to your own outgoing question or request. Returns the reply text directly to this session, or pending after the timeout. Use read on the reply ID for attachments.",
+        ["message_id"], message_id=MESSAGE_ID, timeout_seconds=WAIT_SECONDS,
     ),
     "claim_ide": tool(
         "Atomically claim one incoming request for automatic IDE delivery. A claim is not proof of delivery.",
@@ -322,6 +326,12 @@ class Mailbox(MailboxStore):
         message = self.find(db, message_id, incoming=True)
         if message["kind"] not in ("question", "request", "handoff", "reply") or message["acknowledged_at"]:
             raise BridgeError("only pending incoming requests and replies can be claimed")
+        if message["kind"] == "reply" and (
+            db.execute("SELECT 1 FROM waited_replies WHERE reply_id = ?", (message_id,)).fetchone()
+            or db.execute("SELECT 1 FROM reply_waiters WHERE message_id = ? AND recipient = ? AND expires_at > ?",
+                          (message["reply_to"], self.agent, time.time())).fetchone()
+        ):
+            return {"claimed": False}
         if message["kind"] != "reply" and db.execute("SELECT 1 FROM messages WHERE reply_to = ? AND sender = ? AND kind = 'reply'",
                       (message_id, self.agent)).fetchone():
             return {"claimed": False}

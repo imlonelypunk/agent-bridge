@@ -34,6 +34,8 @@ claude mcp add --scope user --transport stdio agent_bridge -- python $bridge --a
 
 Start a fresh session after registration. Ask an agent to send a short question or check its inbox. To attach a tracked file, name the exact workspace-relative path and explicitly approve sending it. Use a fixed `--workspace` if the client starts the MCP server outside the intended checkout.
 
+For a request that needs a response, the sender can call `wait_reply` with the returned message ID. It waits up to 50 seconds and returns the matching reply text directly into the same agent session; call it again after `pending` if the recipient is still working. Use `read` on the returned reply ID for attachments. Waiting does not start the recipient: its IDE must be running and configured to accept the request. Existing MCP sessions must be restarted after updating the bridge to expose the new tool.
+
 ### Agent instructions
 
 The [Agent Bridge skill](plugin/skills/agent-bridge/SKILL.md) tells agents how to send, receive and correlate messages, and explains the difference between an IDE delivery and an isolated advisory run. It is included in the Claude Code plugin. To make it discoverable in Codex on Windows, copy the skill folder and start a new Codex session:

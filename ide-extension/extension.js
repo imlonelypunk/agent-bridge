@@ -15,6 +15,18 @@ const MAX_STDOUT = 4 * 1024 * 1024;
 const MAX_STDERR = 64 * 1024;
 const pythonResolutions = new Map();
 
+async function withDeliveryDeadline(operation, milliseconds = 30000) {
+  let timer;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("IDE did not confirm submission within 30 seconds; delivery status is unknown")), milliseconds); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function resolveConfiguredPython(configured) {
   const key = configured.trim();
   if (!pythonResolutions.has(key)) {
@@ -290,7 +302,7 @@ class InboxConnector {
         "--repository-id", repository.repositoryId], repository);
       if (!claim.claimed) continue;
       try {
-        await this.openMessage(message.id, true, true);
+        await withDeliveryDeadline(this.openMessage(message.id, true, true));
       } catch (error) {
         this.output.appendLine(`Automatic delivery ${message.id} failed: ${error.message}`);
         void vscode.window.showErrorMessage(`Agent Bridge could not automatically deliver ${message.id}. Review the inbox and output before retrying.`);

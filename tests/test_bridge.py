@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 import unittest
 
 import bridge
@@ -42,6 +43,26 @@ class BridgeTests(unittest.TestCase):
 
     def profile(self, agent):
         return bridge.Mailbox(self.workspace, agent, self.channel)
+
+    def test_wait_reply_returns_only_correlated_response_without_locking_mailbox(self):
+        sender = self.profile("codex")
+        recipient = self.profile("antigravity")
+        first = sender.call("send", {"to": "antigravity", "kind": "question", "body": "First"})
+        second = sender.call("send", {"to": "antigravity", "kind": "question", "body": "Second"})
+        mid = first["message_id"]
+        with self.assertRaises(bridge.BridgeError):
+            recipient.call("wait_reply", {"message_id": mid, "timeout_seconds": 1})
+        self.assertEqual(sender.call("wait_reply", {"message_id": mid, "timeout_seconds": 1})["state"], "pending")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(sender.call, "wait_reply", {"message_id": mid, "timeout_seconds": 5})
+            recipient.call("reply", {"message_id": second["message_id"], "body": "Wrong thread"})
+            sent = recipient.call("reply", {"message_id": mid, "body": "Correct thread"})
+            result = pending.result(timeout=6)
+        self.assertEqual(result["reply"]["id"], sent["message_id"])
+        self.assertEqual(result["reply"]["body"], "Correct thread")
+        self.assertIn(sent["message_id"], [m["id"] for m in sender.call("inbox", {})["messages"]])
+        self.assertFalse(sender.call("claim_ide", {"message_id": sent["message_id"],
+            "repository_id": bridge.repository_id_for_workspace(self.workspace)})["claimed"])
 
     def test_ide_claim_is_scoped_unique_and_waits_for_reply(self):
         sender = self.profile("codex")

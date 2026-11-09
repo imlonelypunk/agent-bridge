@@ -22,6 +22,8 @@ REQUEST_ID = {
     "type": "string", "pattern": "^[a-zA-Z0-9._-]{1,100}$",
     "description": "Reuse this key to safely retry the same send or reply.",
 }
+WAIT_SECONDS = {"type": "integer", "minimum": 1, "maximum": 50,
+                "description": "Maximum seconds to wait; defaults to 30. Repeat after a pending result if needed."}
 REPOSITORY_ID = {"type": "string", "minLength": 1, "maxLength": 512,
                  "description": "Repository routing key or shared alias used by the other IDEs."}
 INBOX_FIELDS = {
@@ -106,6 +108,13 @@ class MailboxStore:
                     UNIQUE (sender, request_id)
                 );
                 CREATE INDEX IF NOT EXISTS inbox ON messages(recipient, seq);
+                CREATE TABLE IF NOT EXISTS reply_waiters (
+                    message_id TEXT NOT NULL, recipient TEXT NOT NULL, token TEXT PRIMARY KEY,
+                    expires_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS waited_replies (
+                    reply_id TEXT PRIMARY KEY
+                );
             """)
         except Exception:
             db.close()
@@ -173,6 +182,38 @@ class MailboxStore:
             (timestamp(), message_id),
         )
         return {"message_id": message_id, "acknowledged": True}
+
+    def wait_reply(self, db, message_id, timeout_seconds=30):
+        original = self.find(db, message_id)
+        if original["sender"] != self.agent or original["kind"] not in ("question", "request", "handoff"):
+            raise BridgeError("wait_reply requires your own outgoing question or request")
+        token = uuid4().hex
+        db.execute("DELETE FROM reply_waiters WHERE expires_at < ?", (time.time(),))
+        db.execute("INSERT INTO reply_waiters VALUES (?, ?, ?, ?)",
+                   (message_id, self.agent, token, time.time() + timeout_seconds + 5))
+        db.commit()
+        deadline = time.monotonic() + timeout_seconds
+        keep_grace = False
+        try:
+            while True:
+                reply = db.execute(
+                    "SELECT id, sender, body, sent_at FROM messages WHERE reply_to = ? "
+                    "AND sender = ? AND recipient = ? AND kind = 'reply' ORDER BY seq LIMIT 1",
+                    (message_id, original["recipient"], self.agent),
+                ).fetchone()
+                if reply:
+                    db.execute("INSERT OR IGNORE INTO waited_replies VALUES (?)", (reply["id"],))
+                    db.commit()
+                    return {"state": "replied", "message_id": message_id, "reply": dict(reply)}
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    keep_grace = True
+                    return {"state": "pending", "message_id": message_id}
+                time.sleep(min(0.5, remaining))
+        finally:
+            if not keep_grace:
+                db.execute("DELETE FROM reply_waiters WHERE token = ?", (token,))
+                db.commit()
 
 
 def repository_id_for_workspace(root):
@@ -244,6 +285,10 @@ class TextMailbox(MailboxStore):
             "Mark an incoming message acknowledged when the user asks to clear it from the pending inbox.",
             ["message_id"], message_id=MESSAGE_ID, repository_id=REPOSITORY_ID,
         ), "Acknowledge a message", False, True),
+        "wait_reply": annotated(tool(
+            "Wait for a correlated reply to your own outgoing question or request. Returns the reply text directly to this session, or pending after the timeout; it does not acknowledge the reply.",
+            ["message_id"], message_id=MESSAGE_ID, timeout_seconds=WAIT_SECONDS,
+        ), "Wait for a reply", False, True),
     }
 
     def connect(self):
@@ -331,7 +376,7 @@ def rpc_result(mailbox, method, params):
         version = params.get("protocolVersion")
         return {
             "protocolVersion": version if version in VERSIONS else VERSIONS[0],
-            "serverInfo": {"name": "agent-bridge", "version": "0.1.2"},
+            "serverInfo": {"name": "agent-bridge", "version": "0.1.3"},
             "capabilities": {"tools": {"listChanged": False}},
             "instructions": (
                 "This is Claude's local text mailbox. Use tools only for the user's requested mailbox action. "

@@ -24,7 +24,7 @@ For cloud workspaces or repositories with different remotes, give the `repositor
 - “Check my Agent Bridge inbox for repository key `team/project` and show me the newest message.”
 - “Reply to Antigravity's message with ‘I reproduced the failure on Windows.’”
 
-The plugin exposes five text operations. Use it to send, list, read, reply and acknowledge. This profile has no attachment access, CLI dispatch or SSH tools. Acknowledging a message hides it from the default pending view and preserves it in the mailbox.
+The plugin exposes text operations to send, list, read, reply, acknowledge, and wait for a correlated reply. After sending a question or request, call `wait_reply` with its message ID; the reply returns directly into the same Claude session, or the tool returns `pending` after the chosen timeout. Repeat while waiting. The recipient must still be running and configured for automatic delivery. This profile has no attachment access, CLI dispatch or SSH tools. Acknowledging a message hides it from the default pending view and preserves it in the mailbox.
 
 The plugin also includes the `agent-bridge` skill with instructions for coordinating messages and replies. Ask Claude to use Agent Bridge when contacting another agent. The skill does not add attachment or dispatch capabilities to this text-only profile.
 

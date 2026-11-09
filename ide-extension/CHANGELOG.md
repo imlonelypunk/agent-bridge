@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Bundle the bridge tool that returns correlated replies to a waiting agent session.
+
 ## 0.1.2
 
 - Add opt-in automatic Antigravity request and reply delivery with mailbox claims to avoid duplicate submissions across windows.
