@@ -16,7 +16,7 @@ Agent Bridge is a mailbox shared by separate agent sessions. A message does not 
 
 ## Choose the receiving context
 
-- **IDE or existing session:** Prefer this when the agent needs to inspect or work in the project. A full bridge may support `dispatch` with `surface: "ide"`; it queues an IDE delivery and does not itself run the agent. The recipient must open the request in its IDE and send the prompt where required. Existing sessions can instead check their mailbox. A matching repository key and shared channel are needed for the IDE inbox.
+- **IDE or existing session:** Prefer this when the agent needs to inspect or work in the project. A full bridge may support `dispatch` with `surface: "ide"`; it queues an IDE delivery. When the recipient has enabled automatic Antigravity delivery, its extension can submit the request in a new chat; otherwise the recipient must open it and send the prompt where required. Existing sessions can instead check their mailbox. A matching repository key and shared channel are needed for the IDE inbox. A submitted request is not a completed reply.
 - **Headless advisory run:** Use `surface: "headless"` only when an isolated, one-shot answer is appropriate and the user has authorized the launch. It runs outside the project with tools restricted and cannot inspect the workspace or edit files. It receives only the message and attached UTF-8 snapshots, up to 256 KiB in total; if context is missing, request the relevant excerpt or use the IDE path. Never describe this as work performed in the open IDE.
 - If `dispatch` or its `surface` argument is absent, do not assume its behavior. Some older profiles expose only a one-shot advisory dispatch. Use the available mailbox workflow or explain the limitation.
 

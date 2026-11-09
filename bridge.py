@@ -87,6 +87,10 @@ TOOLS = {
         "Show the launch state and reply ID for a message.",
         ["message_id"], message_id=MESSAGE_ID,
     ),
+    "claim_ide": tool(
+        "Atomically claim one incoming request for automatic IDE delivery. A claim is not proof of delivery.",
+        ["message_id", "repository_id"], message_id=MESSAGE_ID, repository_id=REPOSITORY_ID,
+    ),
 }
 
 
@@ -233,6 +237,9 @@ class Mailbox(MailboxStore):
                 CREATE TABLE IF NOT EXISTS message_repositories (
                     message_id TEXT PRIMARY KEY, repository_id TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS ide_claims (
+                    message_id TEXT PRIMARY KEY, recipient TEXT NOT NULL, claimed_at TEXT NOT NULL
+                );
             """)
         except Exception:
             db.close()
@@ -308,6 +315,29 @@ class Mailbox(MailboxStore):
             (time.time() + OPEN_TTL, message_id),
         )
         return result
+
+    def claim_ide(self, db, message_id, repository_id):
+        db.execute("BEGIN IMMEDIATE")
+        self.require_repository(db, message_id, repository_id)
+        message = self.find(db, message_id, incoming=True)
+        if message["kind"] not in ("question", "request", "handoff", "reply") or message["acknowledged_at"]:
+            raise BridgeError("only pending incoming requests and replies can be claimed")
+        if message["kind"] != "reply" and db.execute("SELECT 1 FROM messages WHERE reply_to = ? AND sender = ? AND kind = 'reply'",
+                      (message_id, self.agent)).fetchone():
+            return {"claimed": False}
+        active = db.execute(
+            "SELECT 1 FROM ide_claims c JOIN messages m ON m.id = c.message_id "
+            "JOIN message_repositories mr ON mr.message_id = m.id "
+            "WHERE c.recipient = ? AND mr.repository_id = ? AND m.kind != 'reply' AND NOT EXISTS "
+            "(SELECT 1 FROM messages r WHERE r.reply_to = c.message_id AND r.sender = c.recipient "
+            "AND r.kind = 'reply') LIMIT 1", (self.agent, repository_id),
+        ).fetchone()
+        if active and message["kind"] != "reply":
+            return {"claimed": False}
+        result = db.execute(
+            "INSERT OR IGNORE INTO ide_claims VALUES (?, ?, ?)", (message_id, self.agent, timestamp()),
+        )
+        return {"claimed": result.rowcount == 1}
 
     def call(self, name, arguments, uploaded=None, relay=False):
         validate_call(self.tools, name, arguments)

@@ -43,6 +43,26 @@ class BridgeTests(unittest.TestCase):
     def profile(self, agent):
         return bridge.Mailbox(self.workspace, agent, self.channel)
 
+    def test_ide_claim_is_scoped_unique_and_waits_for_reply(self):
+        sender = self.profile("codex")
+        recipient = self.profile("antigravity")
+        first = sender.call("send", {"to": "antigravity", "kind": "question", "body": "First"})
+        second = sender.call("send", {"to": "antigravity", "kind": "request", "body": "Second"})
+        key = bridge.repository_id_for_workspace(self.workspace)
+        args = {"message_id": first["message_id"], "repository_id": key}
+        with self.assertRaises(bridge.BridgeError):
+            recipient.call("claim_ide", {**args, "repository_id": "other"})
+        self.assertTrue(recipient.call("claim_ide", args)["claimed"])
+        self.assertFalse(recipient.call("claim_ide", args)["claimed"])
+        second_args = {"message_id": second["message_id"], "repository_id": key}
+        self.assertFalse(recipient.call("claim_ide", second_args)["claimed"])
+        reply = recipient.call("reply", {"message_id": first["message_id"], "body": "Done"})
+        reply_args = {"message_id": reply["message_id"], "repository_id": key}
+        self.assertTrue(sender.call("claim_ide", reply_args)["claimed"])
+        self.assertFalse(sender.call("claim_ide", reply_args)["claimed"])
+        self.assertFalse(recipient.call("claim_ide", args)["claimed"])
+        self.assertTrue(recipient.call("claim_ide", second_args)["claimed"])
+
     def test_repository_key_cli_matches_routed_message_with_and_without_origin(self):
         for remote in (None, "https://github.com/Example/Repo.git"):
             if remote:

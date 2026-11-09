@@ -2,7 +2,7 @@
   "name": "agent-bridge",
   "displayName": "Agent Bridge",
   "description": "Send repository-scoped requests and replies between Antigravity, Codex, and Claude Code IDEs.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "imlonelypunk",
   "license": "MIT",
   "icon": "icon.png",
@@ -162,6 +162,12 @@
           "default": true,
           "scope": "application",
           "description": "Allow an explicitly confirmed send to create an IDE inbox delivery record."
+        },
+        "agentBridge.autoAntigravity": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "Automatically submit incoming requests to a new Antigravity chat and wait for its Agent Bridge reply. Uses undocumented Antigravity commands."
         },
         "agentBridge.sshHost": {
           "type": "string",

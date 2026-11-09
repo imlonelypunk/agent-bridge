@@ -171,6 +171,7 @@ class InboxConnector {
       remoteCommand: settings.get("remoteCommand", "").trim(),
       repositoryId: settings.get("repositoryId", "").trim(),
       enableDispatch: settings.get("enableDispatch", true),
+      autoAntigravity: settings.get("autoAntigravity", false),
       workspace: this.workspacePath(),
     };
   }
@@ -230,6 +231,9 @@ class InboxConnector {
         ? result.messages.filter((message) => MESSAGE_ID.test(message.id)) : [];
       this.changed.fire(undefined);
       this.emitCount(true);
+      if (agent === "antigravity" && config.autoAntigravity) {
+        await this.deliverAutomatically(config, repository);
+      }
       if (vscode.window.state.focused) void this.notifyNew(this.actionable());
     } catch (error) {
       this.lastError = error.message;
@@ -272,6 +276,27 @@ class InboxConnector {
 
   actionable() {
     return this.items.filter((message) => ["question", "request", "handoff", "reply", "note"].includes(message.kind));
+  }
+
+  async deliverAutomatically(config, repository) {
+    const commands = new Set(await vscode.commands.getCommands(true));
+    if (!["antigravity.startNewConversation", "antigravity.addContext", "antigravity.triggerSend"]
+      .every((command) => commands.has(command))) {
+      throw new Error("Automatic Antigravity delivery is unavailable: required chat commands are missing.");
+    }
+    const requests = this.items.filter((item) => ["question", "request", "handoff", "reply"].includes(item.kind));
+    for (const message of requests.reverse()) {
+      const claim = await this.call(config, "antigravity", ["claim_ide", "--message-id", message.id,
+        "--repository-id", repository.repositoryId], repository);
+      if (!claim.claimed) continue;
+      try {
+        await this.openMessage(message.id, true, true);
+      } catch (error) {
+        this.output.appendLine(`Automatic delivery ${message.id} failed: ${error.message}`);
+        void vscode.window.showErrorMessage(`Agent Bridge could not automatically deliver ${message.id}. Review the inbox and output before retrying.`);
+      }
+      break;
+    }
   }
 
   emitCount(ready = this.configured() && Boolean(this.workspacePath())) {
@@ -379,7 +404,7 @@ class InboxConnector {
     }
   }
 
-  async openMessage(id, start) {
+  async openMessage(id, start, automatic = false) {
     if (id && typeof id === "object") id = id.id;
     if (typeof id !== "string" || !MESSAGE_ID.test(id)) {
       void vscode.window.showErrorMessage("Agent Bridge: invalid message id.");
@@ -400,6 +425,25 @@ class InboxConnector {
       if (message.recipient !== agent) throw new Error(`This message is addressed to @${message.recipient}, not @${agent}.`);
       if (message.repository_id !== repository.repositoryId) {
         throw new Error("This message belongs to another repository. Open that repository or set agentBridge.repositoryId to its shared key.");
+      }
+      if (message.kind === "reply" && automatic) {
+        const original = message.reply_to ? await this.call(config, agent, [
+          "read", "--message-id", message.reply_to, "--repository-id", repository.repositoryId,
+        ], repository) : null;
+        const prompt = [
+          `Agent Bridge reply from @${message.sender} to your earlier request.`,
+          original ? `Earlier request:\n${original.body}` : "",
+          `Reply:\n${message.body}`,
+          Array.isArray(message.attachments) && message.attachments.length
+            ? `Attachments:\n${message.attachments.map((item) => `- ${item.path}`).join("\n")}` : "",
+          "Use this result in the user's work. This is a reply, not a new request: do not send an automatic reply back through Agent Bridge.",
+        ].filter(Boolean).join("\n\n");
+        await vscode.commands.executeCommand("antigravity.startNewConversation");
+        await vscode.commands.executeCommand("antigravity.addContext", prompt);
+        await vscode.commands.executeCommand("antigravity.triggerSend");
+        this.output.appendLine(`Submitted reply ${id} to Antigravity.`);
+        await this.call(config, agent, ["ack", "--message-id", id, "--repository-id", repository.repositoryId], repository);
+        return;
       }
       if (message.kind === "reply" || message.kind === "note") {
         await this.openTextMessage(message, repository);
@@ -429,6 +473,13 @@ class InboxConnector {
         await this.openTextMessage({ ...message, body: prompt }, repository);
         return;
       }
+      if (automatic) {
+        await vscode.commands.executeCommand("antigravity.startNewConversation");
+        await vscode.commands.executeCommand("antigravity.addContext", prompt);
+        await vscode.commands.executeCommand("antigravity.triggerSend");
+        this.output.appendLine(`Submitted ${id} to Antigravity; waiting for its bridge reply.`);
+        return;
+      }
       await openInIde(agent, prompt, attachmentPaths.map((item) => item.path));
       this.notified.add(id);
       await this.context.globalState.update("agentBridge.notified", [...this.notified].slice(-500));
@@ -443,6 +494,7 @@ class InboxConnector {
         await this.refresh(false);
       }
     } catch (error) {
+      if (automatic) throw error;
       this.output.appendLine(`[${new Date().toISOString()}] Could not open ${id}: ${error.message}`);
       void vscode.window.showErrorMessage(`Agent Bridge could not open this message: ${error.message}`);
     }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Add opt-in automatic Antigravity request and reply delivery with mailbox claims to avoid duplicate submissions across windows.
+
 ## 0.1.1
 
 - Generalize the IDE extension for Antigravity, Codex, and Claude Code roles.

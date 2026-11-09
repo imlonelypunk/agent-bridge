@@ -22,6 +22,8 @@ Run **Agent Bridge: Send to Agent** from the Command Palette. Choose a recipient
 
 Incoming requests, notes, and replies appear in **Agent Bridge Inbox**. Choose **Open in IDE** to open a request in the matching agent's IDE surface. Replies open as Markdown in the workspace and remain visible to the sender in the same repository inbox. Reviewing a reply or note acknowledges it. After opening a request, confirm that it reached the chat before acknowledging it; otherwise it remains in the inbox. The IDE still applies its normal permissions and the agent must use the Agent Bridge reply tool with the original message ID.
 
+For unattended delivery to Antigravity, enable `agentBridge.autoAntigravity` in the receiving IDE. The extension polls the matching repository, claims each incoming request or reply once across windows, creates a new Antigravity conversation and submits it. Replies include the earlier request for context and do not request another bridge reply. The agent must have its own Agent Bridge MCP profile and use `reply` for the sender to receive an answer. A queued or submitted request is not a reply. Only one automatically claimed request per role is processed until that agent replies; if the IDE closes or submission fails after a claim, inspect the inbox and handle the request manually. This mode uses undocumented Antigravity commands and may stop working when the IDE changes. It does not automatically start Codex or Claude Code chats.
+
 ## IDE adapters and limits
 
 - **Claude Code:** uses the documented `vscode://anthropic.claude-code/open?prompt=...` handler. It pre-fills a new Claude Code chat but does not send it; review the prompt and press Enter. If the encoded link exceeds 2,000 characters or the handler declines it, the request opens in a document and is copied for manual paste. See [Claude Code IDE integrations](https://code.claude.com/docs/en/ide-integrations).
@@ -40,6 +42,7 @@ End-to-end correlated replies in the final package and the Codex and Claude Code
 - `agentBridge.repositoryId`: optional stable key for cloud and cross-machine routing.
 - `agentBridge.workspacePath`: per-window workspace override.
 - `agentBridge.enableDispatch`: allow confirmed sends to create IDE delivery records.
+- `agentBridge.autoAntigravity`: opt in to automatically submitting incoming requests to Antigravity.
 - `agentBridge.pollSeconds`: mailbox polling interval, 5–60 seconds.
 
 The extension starts `bridge.py` with argument arrays, does not use a shell, and makes no network requests. A configured SSH relay runs only on the trusted host specified by the user.
