@@ -12,6 +12,7 @@ import unittest
 
 import bridge
 import bridge_runner
+from plugin.mailbox_server import TextMailbox
 
 
 class BridgeTests(unittest.TestCase):
@@ -64,6 +65,70 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(sender.call("claim_ide", {"message_id": sent["message_id"],
             "repository_id": bridge.repository_id_for_workspace(self.workspace)})["claimed"])
 
+    def test_wait_inbox_wakes_a_listening_session_once_per_pending_message(self):
+        sender = self.profile("codex")
+        listener = self.profile("claude")
+        repository = bridge.repository_id_for_workspace(self.workspace)
+        self.assertEqual(listener.call("wait_inbox", {"timeout_seconds": 1}), {"state": "idle", "after": 0})
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            waiting = pool.submit(listener.call, "wait_inbox", {"timeout_seconds": 5, "repository_id": repository})
+            sent = sender.call("send", {"to": "claude", "kind": "question", "body": "Which line defines ROOT?"})
+            woken = waiting.result(timeout=6)["message"]
+        self.assertEqual((woken["id"], woken["sender"], woken["preview"]),
+                         (sent["message_id"], "codex", "Which line defines ROOT?"))
+        self.assertEqual(listener.call("wait_inbox", {"timeout_seconds": 1, "after": woken["seq"]})["state"], "idle")
+        self.assertEqual(listener.call("wait_inbox", {"timeout_seconds": 1, "repository_id": "other"})["state"], "idle")
+        self.assertEqual(sender.call("wait_inbox", {"timeout_seconds": 1})["state"], "idle")
+        self.assertEqual(TextMailbox("claude", self.channel).call("wait_inbox", {"timeout_seconds": 1})["message"]["id"],
+                         woken["id"])
+        reply = listener.call("reply", {"message_id": woken["id"], "body": "Line 28"})
+        self.assertEqual(sender.call("wait_inbox", {"timeout_seconds": 1})["message"]["id"], reply["message_id"])
+        self.assertEqual(sender.call("wait_reply", {"message_id": woken["id"], "timeout_seconds": 1})["state"], "replied")
+        self.assertEqual(sender.call("wait_inbox", {"timeout_seconds": 1})["state"], "idle")
+        listener.call("ack", {"message_id": woken["id"]})
+        self.assertEqual(listener.call("wait_inbox", {"timeout_seconds": 1})["state"], "idle")
+
+    def test_watch_cli_exits_with_the_message_or_code_3(self):
+        idle = subprocess.run([*self.command("claude"), "watch", "--timeout-seconds", "1"],
+                              capture_output=True, timeout=15, check=False)
+        self.assertEqual((idle.returncode, json.loads(idle.stdout)["state"]), (3, "idle"))
+        watcher = subprocess.Popen([*self.command("claude"), "watch", "--timeout-seconds", "20"],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            sent = self.profile("codex").call("send", {"to": "claude", "kind": "request", "body": "Wake up"})
+            stdout, stderr = watcher.communicate(timeout=20)
+        finally:
+            if watcher.poll() is None:
+                watcher.kill()
+        self.assertEqual(watcher.returncode, 0, stderr.decode("utf-8", errors="replace"))
+        self.assertEqual(json.loads(stdout)["message"]["id"], sent["message_id"])
+
+    def test_postman_queues_one_notice_per_request_without_its_body(self):
+        log = self.base / "queued.jsonl"
+        fake = self.base / "fake_codex.py"
+        fake.write_text(
+            "import json, sys\nwith open(sys.argv[1], 'a', encoding='utf-8') as log:\n"
+            "    log.write(json.dumps(sys.argv[2:]) + '\\n')\n", encoding="utf-8",
+        )
+        command = [sys.executable, str(fake), str(log)]
+        claude = self.profile("claude")
+        codex = self.profile("codex")
+        claude.call("send", {"to": "codex", "kind": "note", "body": "FYI only"})
+        question = claude.call("send", {"to": "codex", "kind": "question", "body": "Secret body text"})
+        with self.assertRaises(bridge.BridgeError):
+            claude.postman("demo", timeout_seconds=1, command=command)
+        with self.assertRaises(bridge_runner.RunError):
+            codex.postman("demo", timeout_seconds=1, command=[sys.executable, "-c", "raise SystemExit(1)"])
+        first = codex.postman("demo", timeout_seconds=1, command=command)
+        self.assertEqual((first["state"], first["delivered"]), ("idle", [question["message_id"]]))
+        self.assertEqual(codex.postman("demo", timeout_seconds=1, command=command)["delivered"], [])
+        [queued] = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual((queued[:3], queued[3], queued[5]), (["queue", "--thread", "demo"], "--message", "--resume"))
+        self.assertIn(question["message_id"], queued[4])
+        self.assertIn("@claude", queued[4])
+        self.assertNotIn("Secret body", queued[4])
+        self.assertEqual(codex.call("inbox", {})["messages"][0]["id"], question["message_id"])
+
     def test_ide_claim_is_scoped_unique_and_waits_for_reply(self):
         sender = self.profile("codex")
         recipient = self.profile("antigravity")
@@ -83,6 +148,65 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(sender.call("claim_ide", reply_args)["claimed"])
         self.assertFalse(recipient.call("claim_ide", args)["claimed"])
         self.assertTrue(recipient.call("claim_ide", second_args)["claimed"])
+        self.assertTrue(recipient.call("release_ide", second_args)["released"])
+        self.assertTrue(recipient.call("claim_ide", second_args)["claimed"])
+        recipient.call("ack", second_args)
+        third = sender.call("send", {"to": "antigravity", "kind": "question", "body": "Third"})
+        self.assertTrue(recipient.call("claim_ide", {"message_id": third["message_id"], "repository_id": key})["claimed"])
+
+    def test_waiter_barrier_preserves_earlier_reply(self):
+        codex, claude = self.profile("codex"), self.profile("claude")
+        question = codex.call("send", {"to": "claude", "kind": "question", "body": "Question"})
+        with closing(codex.connect()) as db:
+            db.execute("INSERT INTO reply_waiters VALUES (?, ?, ?, ?)",
+                       (question["message_id"], "codex", "test", time.time() + 60))
+            db.commit()
+            reply = claude.call("reply", {"message_id": question["message_id"], "body": "Answer"})
+            claude.call("send", {"to": "codex", "kind": "question", "body": "Later"})
+            self.assertIsNone(codex.next_incoming(db))
+            db.execute("DELETE FROM reply_waiters WHERE token = 'test'")
+            db.commit()
+            first = codex.next_incoming(db)
+            self.assertEqual(first["id"], reply["message_id"])
+            self.assertEqual(codex.next_incoming(db, first["seq"])["preview"], "Later")
+
+    def test_postman_recovers_expired_lease_and_scopes_repository(self):
+        codex, claude = self.profile("codex"), self.profile("claude")
+        sent = claude.call("send", {"to": "codex", "kind": "question", "body": "Recovery"})
+        other = claude.call("send", {"to": "codex", "kind": "question", "body": "Other", "repository_id": "other"})
+        with closing(codex.connect()) as db:
+            db.execute("INSERT INTO postman_deliveries VALUES (?, 'dead', 'leased', ?)",
+                       (sent["message_id"], time.time() - 1))
+            db.commit()
+        fake = self.base / "fake.py"
+        fake.write_text("pass\n", encoding="utf-8")
+        result = codex.postman("demo", timeout_seconds=1, command=[sys.executable, str(fake)])
+        self.assertEqual(result["delivered"], [sent["message_id"]])
+        self.assertNotIn(other["message_id"], result["delivered"])
+
+    def test_postman_budget_survives_restart(self):
+        codex, claude = self.profile("codex"), self.profile("claude")
+        first = claude.call("send", {"to": "codex", "kind": "question", "body": "First"})
+        second = claude.call("send", {"to": "codex", "kind": "question", "body": "Second"})
+        fake = self.base / "fake.py"
+        fake.write_text("pass\n", encoding="utf-8")
+        command = [sys.executable, str(fake)]
+        self.assertEqual(codex.postman("demo", timeout_seconds=1, max_deliveries=1, command=command)["delivered"], [first["message_id"]])
+        result = codex.postman("demo", timeout_seconds=1, max_deliveries=1, command=command)
+        self.assertEqual((result["state"], result["delivered"]), ("stopped", []))
+        self.assertEqual(codex.call("read", {"message_id": second["message_id"]})["body"], "Second")
+
+    def test_each_pair_communicates_without_third_agent(self):
+        for sender_role in ("codex", "claude", "antigravity"):
+            for recipient_role in ("codex", "claude", "antigravity"):
+                if sender_role == recipient_role:
+                    continue
+                sender, recipient = self.profile(sender_role), self.profile(recipient_role)
+                sent = sender.call("send", {"to": recipient_role, "kind": "question", "body": "Pair check"})
+                message = recipient.call("read", {"message_id": sent["message_id"]})
+                self.assertEqual(message["sender"], sender_role)
+                reply = recipient.call("reply", {"message_id": sent["message_id"], "body": "Pair response"})
+                self.assertEqual(sender.call("wait_reply", {"message_id": sent["message_id"], "timeout_seconds": 1})["reply"]["id"], reply["message_id"])
 
     def test_repository_key_cli_matches_routed_message_with_and_without_origin(self):
         for remote in (None, "https://github.com/Example/Repo.git"):

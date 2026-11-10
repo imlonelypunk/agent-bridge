@@ -25,14 +25,31 @@ def executable(agent, store):
     if os.name == "nt":
         name += ".exe"
     candidates = [shutil.which(name)]
+    local = os.environ.get("LOCALAPPDATA")
     if agent == "antigravity":
         candidates.append(store / "bin" / name)
-        if local := os.environ.get("LOCALAPPDATA"):
+        if local:
             candidates.append(Path(local) / "agy" / "bin" / name)
+    if agent == "codex" and local:
+        # The desktop app keeps its CLI in a versioned folder that is not on PATH.
+        candidates += sorted((Path(local) / "OpenAI" / "Codex" / "bin").glob("*/" + name),
+                             key=lambda path: path.stat().st_mtime, reverse=True)
     for candidate in candidates:
         if candidate and Path(candidate).is_file():
             return str(Path(candidate).resolve())
     raise RunError(f"{name} is unavailable. The recipient can reply in an open session.")
+
+
+def queue_codex(command, thread, text):
+    """Queue a notice in an existing Codex session and ask its local daemon to resume it."""
+    result = subprocess.run(
+        [*command, "queue", "--thread", thread, "--message", text, "--resume"],
+        stdin=subprocess.DEVNULL, capture_output=True, timeout=60, creationflags=NO_WINDOW, check=False,
+    )
+    detail = result.stderr.decode("utf-8", errors="replace").strip()[-300:]
+    if result.returncode:
+        raise RunError(f"Codex did not accept the queued notice. {detail}")
+    return detail
 
 
 def check_antigravity_hooks(home):

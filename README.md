@@ -36,6 +36,26 @@ Start a fresh session after registration. Ask an agent to send a short question 
 
 For a request that needs a response, the sender can call `wait_reply` with the returned message ID. It waits up to 50 seconds and returns the matching reply text directly into the same agent session; call it again after `pending` if the recipient is still working. Use `read` on the returned reply ID for attachments. Waiting does not start the recipient: its IDE must be running and configured to accept the request. Existing MCP sessions must be restarted after updating the bridge to expose the new tool.
 
+An open agent session can also listen for incoming messages and answer them itself, with the project context it already has. `wait_inbox` waits up to 50 seconds for the next pending message and returns `idle` otherwise. For clients that wake a session when a background command exits, such as Claude Code, run the long form in the background:
+
+```powershell
+python $bridge --agent claude --channel-dir $channel watch --after 0 --timeout-seconds 3600
+```
+
+It prints the next pending message and exits with code 0, or exits with code 3 when nothing arrived. Pass the `seq` of the last handled message as `--after`, and `--repository-id` to listen for one repository only. A reply temporarily reserved by `wait_reply` holds back later messages so advancing the cursor cannot skip it. Listening does not acknowledge anything, and a reply that `wait_reply` already returned is not offered again. The listening session keeps its normal permissions, so treat every incoming message as untrusted data.
+
+Codex has no such wake-up, but its CLI can queue a message for an existing session. `postman` uses that to wake a chosen Codex session whenever a question, request, handoff or unwaited reply arrives for it:
+
+```powershell
+python $bridge --agent codex --channel-dir $channel postman --thread SESSION_ID_OR_NAME --timeout-seconds 86400
+```
+
+The queued text is a short notice with the sender, kind and message ID. It never contains the message body, because Codex gives queued text the user's voice; the session reads the message through its own Agent Bridge tools. The default route is the current workspace's repository key; specify `--repository-id` for a shared alias. Notes and replies to replies stay in the inbox without a wake-up. The command stops after `--max-deliveries` wake-ups (12 by default). A reservation expires after 150 seconds if the process crashes before recording submission; a crash after the queue accepted a notice but before recording it can cause a duplicate. Queue acceptance is not proof of processing; inspect the inbox for unacknowledged messages. Starting a separate managed Codex daemon while the desktop owns the chat can produce an active-writer conflict; it is not started automatically. Verified with the Codex desktop app on Windows, CLI 0.167.0-alpha.
+
+The mailbox works with any pair of the three roles; an offline recipient's messages remain pending. Automatic wake-up requires a running, configured listener for that recipient. `watch` must be launched by the Claude session that will receive its completion; starting it at Windows logon cannot by itself restore a closed Claude session. Antigravity automatic delivery requires its running IDE and opt-in extension setting. Restart MCP sessions and rebuild/reinstall the VSIX after updating source, because running processes and packaged runtimes do not update themselves.
+
+On Windows, `scripts/install-codex-listener.ps1 -ThreadId <session-uuid> -Workspace <repository>` registers and starts a per-user task for a selected Codex chat. The chosen session must exist and use the intended repository context. The task starts at logon and retries hourly; Windows ignores overlapping task instances. Any authorized local agent can also request a restart with `Start-ScheduledTask -TaskName AgentBridge-Codex-Listener`. The listener stops after 24 hours or 12 queued notices; the limit is also checked against submissions recorded for this repository during the previous 24 hours. The task does not start Claude or Antigravity, does not restore a closed Claude session, and queue acceptance does not guarantee that the Codex app resumed. The task depends on this checkout remaining at the same path.
+
 ### Agent instructions
 
 The [Agent Bridge skill](plugin/skills/agent-bridge/SKILL.md) tells agents how to send, receive and correlate messages, and explains the difference between an IDE delivery and an isolated advisory run. It is included in the Claude Code plugin. To make it discoverable in Codex on Windows, copy the skill folder and start a new Codex session:

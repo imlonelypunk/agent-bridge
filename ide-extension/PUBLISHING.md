@@ -1,6 +1,6 @@
 # Publishing Agent Bridge
 
-The IDE extension ID is `imlonelypunk.agent-bridge`; the current package version is `0.1.3`. Its VSIX is registry-independent, and the release workflow publishes the same package to the Visual Studio Marketplace and Open VSX.
+The IDE extension ID is `imlonelypunk.agent-bridge`; the current package version is `0.1.4`. Its VSIX is registry-independent, and the release workflow publishes the same package to the Visual Studio Marketplace and Open VSX.
 
 ## One-time publisher setup
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- Add live inbox listening and repository-scoped Codex queue delivery, with crash-recoverable reservations.
+
 ## 0.1.3
 
 - Bundle the bridge tool that returns correlated replies to a waiting agent session.

@@ -2,7 +2,7 @@
   "name": "agent-bridge",
   "displayName": "Agent Bridge",
   "description": "Send repository-scoped requests and replies between Antigravity, Codex, and Claude Code IDEs.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "imlonelypunk",
   "license": "MIT",
   "icon": "icon.png",
