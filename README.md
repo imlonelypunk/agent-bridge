@@ -56,6 +56,8 @@ The mailbox works with any pair of the three roles; an offline recipient's messa
 
 On Windows, `scripts/install-codex-listener.ps1 -ThreadId <session-uuid> -Workspace <repository>` registers and starts a per-user task for a selected Codex chat. The chosen session must exist and use the intended repository context. The task starts at logon and retries hourly; Windows ignores overlapping task instances. Any authorized local agent can also request a restart with `Start-ScheduledTask -TaskName AgentBridge-Codex-Listener`. The listener stops after 24 hours or 12 queued notices; the limit is also checked against submissions recorded for this repository during the previous 24 hours. The task does not start Claude or Antigravity, does not restore a closed Claude session, and queue acceptance does not guarantee that the Codex app resumed. The task depends on this checkout remaining at the same path.
 
+The task uses `pythonw.exe` and has no console window. Diagnostics are written to `%LOCALAPPDATA%\AgentBridge\logs\codex-listener.log`; restarting the task rotates a log larger than 1 MiB. A warning that a message was queued but the thread could not resume means the notice is pending, not that the agent processed it.
+
 Pass `-After <sequence>` during installation to skip older mailbox entries. Skipped messages remain in the inbox for manual review; without this option the listener may wake the chat for older pending messages.
 
 ### Agent instructions

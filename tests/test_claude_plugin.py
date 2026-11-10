@@ -138,7 +138,7 @@ class ClaudePluginTests(unittest.TestCase):
             responses = [json.loads(line) for line in result.stdout.splitlines()]
             self.assertEqual([r["id"] for r in responses], list(range(len(requests))))
             self.assertEqual(responses[0]["result"]["serverInfo"]["name"], "agent-bridge")
-            self.assertEqual(responses[0]["result"]["serverInfo"]["version"], "0.1.4")
+            self.assertEqual(responses[0]["result"]["serverInfo"]["version"], "0.1.5")
             tools = {t["name"]: t for t in responses[1]["result"]["tools"]}
             self.assertEqual(set(tools), {"send", "inbox", "read", "reply", "ack", "wait_reply", "wait_inbox"})
             self.assertTrue(tools["wait_inbox"]["annotations"]["readOnlyHint"])

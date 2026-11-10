@@ -426,7 +426,7 @@ def rpc_result(mailbox, method, params):
         version = params.get("protocolVersion")
         return {
             "protocolVersion": version if version in VERSIONS else VERSIONS[0],
-            "serverInfo": {"name": "agent-bridge", "version": "0.1.4"},
+            "serverInfo": {"name": "agent-bridge", "version": "0.1.5"},
             "capabilities": {"tools": {"listChanged": False}},
             "instructions": (
                 "This is Claude's local text mailbox. Use tools only for the user's requested mailbox action. "

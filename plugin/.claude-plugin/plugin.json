@@ -1,7 +1,7 @@
 {
   "name": "agent-bridge",
   "description": "Exchange explicitly requested messages with Codex and Antigravity through a shared local mailbox.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "author": {"name": "Agent Bridge contributors"},
   "license": "MIT",
   "keywords": ["mcp", "mailbox", "codex", "antigravity", "collaboration"]

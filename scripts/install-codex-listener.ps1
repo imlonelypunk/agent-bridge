@@ -11,14 +11,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $python = (Get-Command python.exe -ErrorAction Stop).Source
-$bridge = (Resolve-Path -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'bridge.py')).Path
+$pythonw = Join-Path (Split-Path -Parent $python) 'pythonw.exe'
+if (-not (Test-Path -LiteralPath $pythonw -PathType Leaf)) { throw 'pythonw.exe is required for a hidden listener.' }
+$bridge = (Resolve-Path -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'listener_service.py')).Path
 $Workspace = (Resolve-Path -LiteralPath $Workspace).Path
 if ($TaskName -notmatch '^[a-zA-Z0-9_-]{1,80}$') { throw 'Invalid task name.' }
 foreach ($value in @($python, $bridge, $Workspace, $ChannelDirectory)) {
     if ($value.Contains('"')) { throw 'Paths containing quotation marks are unsupported.' }
 }
 $arguments = '"{0}" --agent codex --workspace "{1}" --channel-dir "{2}" postman --thread {3} --after {4} --timeout-seconds 86400' -f $bridge, $Workspace, $ChannelDirectory.TrimEnd('\'), $ThreadId, $After
-$action = New-ScheduledTaskAction -Execute $python -Argument $arguments -WorkingDirectory $Workspace
+$action = New-ScheduledTaskAction -Execute $pythonw -Argument $arguments -WorkingDirectory $Workspace
 $logon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $daily = New-ScheduledTaskTrigger -Daily -At '00:00'
 $repeat = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 1)

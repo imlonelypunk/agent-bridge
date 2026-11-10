@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5
+
+- Run the Windows scheduled Codex listener without a console and record its diagnostics to a local log.
+
 ## 0.1.4
 
 - Add live inbox listening and repository-scoped Codex queue delivery, with crash-recoverable reservations.
